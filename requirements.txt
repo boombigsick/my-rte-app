@@ -1,2 +1,6 @@
 pandas
 plotly
+streamlit
+easyocr
+opencv-python-headless
+numpy
