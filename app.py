@@ -6,19 +6,17 @@ import easyocr
 import numpy as np
 from PIL import Image
 
-# --- CONFIG & THEME ---
-st.set_page_config(page_title="RTE Executive Dashboard", layout="wide")
+# --- CONFIG & MODERN THEME ---
+st.set_page_config(page_title="RTE Dashboard", layout="wide")
 
-# ปรับแต่งธีม ขาว-แดง-ดำ ให้หรูหรา
+# CSS สำหรับธีมขาว-แดง-ดำ ให้ดูหรูหรา
 st.markdown("""
     <style>
     .main { background-color: #ffffff; }
-    [data-testid="stMetricValue"] { color: #dc3545; font-size: 28px; font-weight: bold; }
-    [data-testid="stMetricLabel"] { color: #333333; font-size: 16px; }
-    .stTable { border-radius: 15px; border: 1px solid #eeeeee; }
-    section[data-testid="stSidebar"] { background-color: #1a1a1a; color: white; }
+    div[data-testid="stMetric"] { background-color: #fcfcfc; border: 1px solid #eeeeee; border-radius: 10px; padding: 15px; border-top: 4px solid #cc0000; }
+    div[data-testid="stSidebar"] { background-color: #000000; }
     section[data-testid="stSidebar"] .stRadio label { color: white !important; }
-    h1, h2, h3 { color: #1a1a1a; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+    h1, h2, h3 { color: #111111; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -57,16 +55,16 @@ reader = get_reader()
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.markdown("<h2 style='color: #dc3545;'>RTE CONTROL</h2>", unsafe_allow_html=True)
-    st.markdown("---")
-    page = st.radio("Menu", ["📊 Summary Overview", "🍟 Snack Page", "🍱 Meal Page"])
-    uploaded_file = st.file_uploader("Upload Image", type=['jpg', 'png', 'jpeg'])
+    st.markdown("<h2 style='color: white;'>RTE MANAGEMENT</h2>", unsafe_allow_html=True)
+    page = st.radio("Navigation", ["🏢 Overview", "🍖 Snack Category", "🍲 Meal Category"])
+    st.divider()
+    uploaded_file = st.file_uploader("Upload Summary Image", type=['jpg', 'png', 'jpeg'])
 
 if uploaded_file:
     image = Image.open(uploaded_file)
     img_np = np.array(image)
     
-    with st.spinner('🚀 Analyzing Data...'):
+    with st.spinner('🚀 AI Is Extracting Data...'):
         result = reader.readtext(img_np)
         full_text = [res[1] for res in result]
         
@@ -82,38 +80,72 @@ if uploaded_file:
 
         # กระจายยอด 99 บาท (621822)
         if "621822" in extracted:
-            val99 = extracted.pop("621822")
+            p99 = extracted.pop("621822")
             for c, r in {"231259": 0.5, "654830": 0.3, "724276": 0.2}.items():
                 if c not in extracted: extracted[c] = {"q": 0, "a": 0}
-                extracted[c]["q"] += val99["q"] * r
-                extracted[c]["a"] += val99["a"] * r
+                extracted[c]["q"] += p99["q"] * r
+                extracted[c]["a"] += p99["a"] * r
 
-        # สร้าง DataFrame
-        rows = []
+        # สร้าง DataFrame (ใช้ชื่อคอลัมน์ภาษาอังกฤษเพื่อความชัวร์)
+        data = []
         for c, v in extracted.items():
-            rows.append({
+            data.append({
                 "Category": CATEGORY_MAP[c],
                 "ArtNo": c,
                 "Name": PRODUCT_NAMES[c],
                 "Qty": v["q"],
-                "BeforeVAT": v["a"],
-                "TotalVAT": round(v["a"] * 1.07, 2)
+                "Amt_Net": v["a"],
+                "Amt_Vat": round(v["a"] * 1.07, 2)
             })
         
-        df = pd.DataFrame(rows)
+        df = pd.DataFrame(data)
 
-        if not df.empty:
-            if page == "📊 Summary Overview":
-                st.title("🚀 Sales Executive Dashboard")
-                total_sales = df["TotalVAT"].sum()
-                achieve = (total_sales / TARGET_REVENUE) * 100
-                
-                # Gauge & Stats
-                c1, c2 = st.columns([2, 1])
-                with c1:
-                    fig = go.Figure(go.Indicator(
-                        mode = "gauge+number+delta",
-                        value = total_sales,
-                        delta = {'reference': TARGET_REVENUE},
-                        title = {'text': "Target Achievement (170k)"},
-                        gauge = {'
+    if not df.empty:
+        if page == "🏢 Overview":
+            st.title("📊 Sales Summary Overview")
+            
+            # --- Gauge Achievement ---
+            total_sales = df["Amt_Vat"].sum()
+            achieve = (total_sales / TARGET_REVENUE) * 100
+            
+            c1, c2 = st.columns([2, 1])
+            with c1:
+                fig = go.Figure(go.Indicator(
+                    mode = "gauge+number", value = total_sales,
+                    title = {'text': "Revenue Achievement vs Target"},
+                    gauge = {'axis': {'range': [None, TARGET_REVENUE]},
+                             'bar': {'color': "#cc0000"},
+                             'steps': [{'range': [0, TARGET_REVENUE], 'color': "#f2f2f2"}]}))
+                st.plotly_chart(fig, use_container_width=True)
+            
+            with c2:
+                st.metric("Achievement (%)", f"{achieve:.2f}%")
+                st.metric("Total Sales (Inc. VAT)", f"{total_sales:,.2f}")
+                st.metric("Gap to Target", f"{max(0, TARGET_REVENUE - total_sales):,.2f}")
+
+            # --- 3 Items ยอดตก ---
+            st.subheader("⚠️ 3 รายการยอดขายน้อยที่สุด (Low Performers)")
+            low_3 = df.sort_values("Qty").head(3)
+            cols = st.columns(3)
+            for i, row in enumerate(low_3.itertuples()):
+                cols[i].warning(f"**{row.Name}**\nQty: {row.Qty} | Total: {row.Amt_Vat:,.2f}")
+
+            # --- Full Ranking Table ---
+            st.subheader("🏆 รายการสินค้าทั้งหมด (เรียงตาม Qty)")
+            st.table(df.sort_values("Qty", ascending=False).style.format({"Amt_Net": "{:,.2f}", "Amt_Vat": "{:,.2f}"}))
+
+        else:
+            # --- หน้าแยกหมวดหมู่ ---
+            cat_name = "ทานเล่น" if "Snack" in page else "พร้อมทาน"
+            st.title(f"📍 หมวด{cat_name}")
+            sub_df = df[df["Category"] == cat_name].sort_values("Qty", ascending=False)
+            
+            if not sub_df.empty:
+                st.metric(f"ยอดรวมสุทธิ {cat_name}", f"{sub_df['Amt_Vat'].sum():,.2f}")
+                fig_bar = px.bar(sub_df, x="Name", y="Amt_Vat", text="Qty", color_discrete_sequence=['#333333'])
+                st.plotly_chart(fig_bar, use_container_width=True)
+                st.table(sub_df.style.format({"Amt_Net": "{:,.2f}", "Amt_Vat": "{:,.2f}"}))
+            else:
+                st.warning("ไม่มีข้อมูลในหมวดนี้จากรูปที่อัปโหลด")
+else:
+    st.info("👈 กรุณาอัปโหลดรูปภาพใบสรุปยอดขายที่เมนูด้านซ้าย")
