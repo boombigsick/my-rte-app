@@ -6,17 +6,23 @@ import easyocr
 import numpy as np
 from PIL import Image
 
-# --- CONFIG & MODERN THEME ---
-st.set_page_config(page_title="RTE Dashboard", layout="wide")
+# --- CONFIG & LIGHT THEME ---
+st.set_page_config(page_title="RTE Sales Report", layout="wide")
 
-# CSS สำหรับธีมขาว-แดง-ดำ ให้ดูหรูหรา
+# ปรับ CSS ให้อ่านง่าย: ตัวหนังสือดำ พื้นขาว เน้นแดง
 st.markdown("""
     <style>
     .main { background-color: #ffffff; }
-    div[data-testid="stMetric"] { background-color: #fcfcfc; border: 1px solid #eeeeee; border-radius: 10px; padding: 15px; border-top: 4px solid #cc0000; }
-    div[data-testid="stSidebar"] { background-color: #000000; }
-    section[data-testid="stSidebar"] .stRadio label { color: white !important; }
-    h1, h2, h3 { color: #111111; }
+    div[data-testid="stMetric"] { 
+        background-color: #f9f9f9; 
+        border: 1px solid #dddddd; 
+        border-radius: 8px; 
+        padding: 15px; 
+    }
+    div[data-testid="stMetricValue"] { color: #cc0000 !important; font-size: 32px !important; }
+    div[data-testid="stMetricLabel"] { color: #333333 !important; font-size: 16px !important; }
+    .stTable { border: 1px solid #eeeeee; }
+    h1, h2, h3 { color: #000000; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -55,16 +61,15 @@ reader = get_reader()
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.markdown("<h2 style='color: white;'>RTE MANAGEMENT</h2>", unsafe_allow_html=True)
-    page = st.radio("Navigation", ["🏢 Overview", "🍖 Snack Category", "🍲 Meal Category"])
-    st.divider()
-    uploaded_file = st.file_uploader("Upload Summary Image", type=['jpg', 'png', 'jpeg'])
+    st.markdown("## ⚙️ การตั้งค่า")
+    page = st.radio("เลือกหน้า", ["📊 ภาพรวม", "🍟 หมวดทานเล่น", "🍱 หมวดพร้อมทาน"])
+    uploaded_file = st.file_uploader("อัปโหลดรูปยอดขาย", type=['jpg', 'png', 'jpeg'])
 
 if uploaded_file:
     image = Image.open(uploaded_file)
     img_np = np.array(image)
     
-    with st.spinner('🚀 AI Is Extracting Data...'):
+    with st.spinner('กำลังประมวลผลข้อมูล...'):
         result = reader.readtext(img_np)
         full_text = [res[1] for res in result]
         
@@ -73,9 +78,11 @@ if uploaded_file:
             code = text.replace(" ", "").strip()
             if code in CATEGORY_MAP:
                 try:
-                    q = float(full_text[i+2].replace(",", ""))
-                    a = float(full_text[i+3].replace(",", ""))
-                    extracted[code] = {"q": q, "a": a}
+                    # แก้ไขตำแหน่ง Index: ขยับไป 2 ช่องเป็น Qty, 3 ช่องเป็น Amount
+                    # ตรวจสอบหาตำแหน่งที่มีค่าตัวเลขจริง
+                    q_val = full_text[i+2].replace(",", "")
+                    a_val = full_text[i+3].replace(",", "")
+                    extracted[code] = {"q": float(q_val), "a": float(a_val)}
                 except: continue
 
         # กระจายยอด 99 บาท (621822)
@@ -86,66 +93,58 @@ if uploaded_file:
                 extracted[c]["q"] += p99["q"] * r
                 extracted[c]["a"] += p99["a"] * r
 
-        # สร้าง DataFrame (ใช้ชื่อคอลัมน์ภาษาอังกฤษเพื่อความชัวร์)
-        data = []
-        for c, v in extracted.items():
-            data.append({
-                "Category": CATEGORY_MAP[c],
-                "ArtNo": c,
-                "Name": PRODUCT_NAMES[c],
-                "Qty": v["q"],
-                "Amt_Net": v["a"],
-                "Amt_Vat": round(v["a"] * 1.07, 2)
-            })
-        
-        df = pd.DataFrame(data)
+        # สร้าง DataFrame
+        df = pd.DataFrame([
+            {"Category": CATEGORY_MAP[c], "Name": PRODUCT_NAMES[c], "Qty": v["q"], 
+             "Amt_Net": v["a"], "Amt_Vat": round(v["a"] * 1.07, 2)}
+            for c, v in extracted.items()
+        ])
 
     if not df.empty:
-        if page == "🏢 Overview":
-            st.title("📊 Sales Summary Overview")
+        if page == "📊 ภาพรวม":
+            st.title("🍎 สรุปยอดขายรายวัน (Overview)")
             
-            # --- Gauge Achievement ---
-            total_sales = df["Amt_Vat"].sum()
-            achieve = (total_sales / TARGET_REVENUE) * 100
+            # --- Gauge ---
+            total_vat = df["Amt_Vat"].sum()
+            achieve = (total_vat / TARGET_REVENUE) * 100
             
             c1, c2 = st.columns([2, 1])
             with c1:
                 fig = go.Figure(go.Indicator(
-                    mode = "gauge+number", value = total_sales,
-                    title = {'text': "Revenue Achievement vs Target"},
-                    gauge = {'axis': {'range': [None, TARGET_REVENUE]},
-                             'bar': {'color': "#cc0000"},
-                             'steps': [{'range': [0, TARGET_REVENUE], 'color': "#f2f2f2"}]}))
+                    mode="gauge+number", value=total_vat,
+                    title={'text': "Achievement vs Target (170k)"},
+                    gauge={'axis': {'range': [None, TARGET_REVENUE]},
+                           'bar': {'color': "#cc0000"},
+                           'steps': [{'range': [0, TARGET_REVENUE], 'color': "#f2f2f2"}]}))
                 st.plotly_chart(fig, use_container_width=True)
             
             with c2:
-                st.metric("Achievement (%)", f"{achieve:.2f}%")
-                st.metric("Total Sales (Inc. VAT)", f"{total_sales:,.2f}")
-                st.metric("Gap to Target", f"{max(0, TARGET_REVENUE - total_sales):,.2f}")
+                st.metric("Achievement", f"{achieve:.2f}%")
+                st.metric("ยอดรวม (+VAT)", f"{total_vat:,.2f}")
+                st.metric("ขาดอีก", f"{max(0, TARGET_REVENUE - total_vat):,.2f}")
 
-            # --- 3 Items ยอดตก ---
-            st.subheader("⚠️ 3 รายการยอดขายน้อยที่สุด (Low Performers)")
+            # --- ยอดรวมรายสเตชั่น ---
+            st.subheader("🏢 ยอดรวมแยกตามสถานี (Station Total)")
+            station_total = df.groupby("Category")[["Amt_Net", "Amt_Vat"]].sum().reset_index()
+            st.table(station_total.style.format({"Amt_Net": "{:,.2f}", "Amt_Vat": "{:,.2f}"}))
+
+            # --- 3 รายการยอดตก ---
+            st.subheader("⚠️ 3 รายการที่ควรดันยอด (Low Qty)")
             low_3 = df.sort_values("Qty").head(3)
             cols = st.columns(3)
             for i, row in enumerate(low_3.itertuples()):
-                cols[i].warning(f"**{row.Name}**\nQty: {row.Qty} | Total: {row.Amt_Vat:,.2f}")
-
-            # --- Full Ranking Table ---
-            st.subheader("🏆 รายการสินค้าทั้งหมด (เรียงตาม Qty)")
-            st.table(df.sort_values("Qty", ascending=False).style.format({"Amt_Net": "{:,.2f}", "Amt_Vat": "{:,.2f}"}))
+                cols[i].warning(f"**{row.Name}**\nQty: {row.Qty} | ยอด: {row.Amt_Vat:,.2f}")
 
         else:
-            # --- หน้าแยกหมวดหมู่ ---
             cat_name = "ทานเล่น" if "Snack" in page else "พร้อมทาน"
-            st.title(f"📍 หมวด{cat_name}")
+            st.title(f"📍 สรุปข้อมูลหมวด: {cat_name}")
             sub_df = df[df["Category"] == cat_name].sort_values("Qty", ascending=False)
             
-            if not sub_df.empty:
-                st.metric(f"ยอดรวมสุทธิ {cat_name}", f"{sub_df['Amt_Vat'].sum():,.2f}")
-                fig_bar = px.bar(sub_df, x="Name", y="Amt_Vat", text="Qty", color_discrete_sequence=['#333333'])
-                st.plotly_chart(fig_bar, use_container_width=True)
-                st.table(sub_df.style.format({"Amt_Net": "{:,.2f}", "Amt_Vat": "{:,.2f}"}))
-            else:
-                st.warning("ไม่มีข้อมูลในหมวดนี้จากรูปที่อัปโหลด")
+            # สรุปยอดหัวหน้า
+            m1, m2 = st.columns(2)
+            m1.metric("ยอดรวมก่อน VAT", f"{sub_df['Amt_Net'].sum():,.2f}")
+            m2.metric("ยอดรวมสุทธิ (+VAT)", f"{sub_df['Amt_Vat'].sum():,.2f}")
+            
+            st.table(sub_df.style.format({"Amt_Net": "{:,.2f}", "Amt_Vat": "{:,.2f}"}))
 else:
-    st.info("👈 กรุณาอัปโหลดรูปภาพใบสรุปยอดขายที่เมนูด้านซ้าย")
+    st.info("👈 กรุณาอัปโหลดรูปภาพที่แถบด้านซ้าย")
