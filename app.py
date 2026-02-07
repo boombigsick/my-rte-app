@@ -1,67 +1,21 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import plotly.express as px
 import easyocr
+import numpy as np
 from PIL import Image
 
-# --- Config & Theme (Transparent Indigo Theme) ---
-st.set_page_config(page_title="RTE Indigo Analyst", layout="wide")
+st.set_page_config(page_title="RTE Sales Pro", layout="wide")
+st.title("📊 RTE Auto-Sales Analyst")
 
-# CSS สำหรับปรับแต่งพื้นหลังโปร่งแสงและโทนสีคราม
-st.markdown("""
-    <style>
-    /* พื้นหลังหลักเป็นสีครามแบบไล่เฉด */
-    .stApp {
-        background: linear-gradient(135deg, #1e3a8a 0%, #312e81 100%);
-        color: white;
-    }
-    
-    /* กล่องข้อมูลแบบโปร่งแสง 50% */
-    div[data-testid="stMetric"], .stDataFrame, .stTable, div.stButton > button {
-        background-color: rgba(255, 255, 255, 0.15) !important; /* พื้นหลังขาวโปร่งแสง */
-        backdrop-filter: blur(10px); /* เอฟเฟกต์กระจกฝ้า */
-        border: 1px solid rgba(255, 255, 255, 0.2) !important;
-        border-radius: 15px !important;
-        color: white !important;
-    }
-
-    /* ปรับแต่งสีตัวเลข Metric */
-    div[data-testid="stMetricValue"] > div {
-        color: #60a5fa !important; /* สีฟ้าสว่างเพื่อให้เด่นบนสีคราม */
-    }
-    
-    /* หัวข้อต่างๆ */
-    h1, h2, h3, p {
-        color: #e0e7ff !important;
-    }
-
-    /* ปรับแต่งตาราง */
-    .styled-table {
-        background-color: rgba(255, 255, 255, 0.1);
-        border-radius: 10px;
-    }
-    </style>
-""", unsafe_allow_html=True)
-
-# --- Master List (รวมรายการเก่า+ใหม่) ---
-MASTER_ITEMS = {
+# ข้อมูลเมนูของคุณ
+TARGET_ITEMS = {
     "203081": "ฮ็อทด็อก", "250561": "ขนมจีบหมู ชุดใหญ่", "274583": "ชุดรวมของทอด",
     "299207": "ไก่ป๊อปชุดใหญ่", "381059": "นักเก็ตไก่คลาสสิค", "395441": "ฮะเก๋าชุดใหญ่",
     "614329": "เกี๊ยวซ่าหมูกุยช่าย ชุดใหญ่", "619903": "ปีกไก่บนคลุกซอส",
     "648962": "ฮะเก๋าโปรโมชั่น", "779278": "ไก่ป๊อป", "782617": "เกี๊ยวซ่าหมูชุดใหญ่",
-    "956994": "นักเก็ตชุดใหญ่",
-    "231259": "เนื้อเป็ดย่างเครื่องเทศ", "302490": "บะหมี่หมูแดงใหญ่",
-    "322224": "ยำหมูกรอบ", "344174": "ขาหมูเยอรมัน",
-    "364882": "หมูแดง", "380450": "บะหมี่เป็ดย่างใหญ่",
-    "621822": "อาหารพร้อมทาน 99 บาท", "654830": "เป็ดพะโล้พร้อมไส้",
-    "695884": "หมูกรอบ แพ็คใหญ่", "724276": "ขาหมูพะโล้ (เลาะเนื้อ)",
-    "781110": "บะหมี่เป็ดพะโล้ใหญ่", "951651": "กุ้งต้ม",
-    "250271": "บะหมี่เป็ดย่าง", "273023": "บะหมี่หมูแดงสไตล์ฮ่องกง",
-    "967970": "บะหมี่เนื้อเป็ดพะโล้"
+    "956994": "นักเก็ตชุดใหญ่"
 }
-
-DAILY_TARGET = 170000
 
 @st.cache_resource
 def get_reader():
@@ -69,78 +23,86 @@ def get_reader():
 
 reader = get_reader()
 
-# --- Main App ---
-st.title("🌌 RTE Indigo Auto-Analyst")
-st.write("ระบบดึงข้อมูลอัตโนมัติ พร้อมกระจายยอดขายและคำนวณเป้าหมาย")
-
-uploaded_file = st.file_uploader("📷 เลือกรูปภาพยอดขาย", type=['jpg', 'png', 'jpeg'])
+uploaded_file = st.file_uploader("📷 อัปโหลดรูปยอดขาย", type=['jpg', 'png', 'jpeg'])
 
 if uploaded_file:
     image = Image.open(uploaded_file)
-    img_np = np.array(image)
+    st.image(image, caption="รูปภาพที่นำเข้า", width=400)
     
-    with st.spinner('🔭 กำลังสแกนหาข้อมูลในโทนสีคราม...'):
+    with st.spinner('AI กำลังคำนวณยอดรวมทั้ง 2 แบบ...'):
+        img_np = np.array(image)
         result = reader.readtext(img_np)
+        
+        extracted_data = []
         full_text_list = [res[1] for res in result]
         
-        extracted_rows = []
         for i, text in enumerate(full_text_list):
-            code = text.replace(" ", "").strip()
-            if code in MASTER_ITEMS:
+            clean_code = text.replace(" ", "").strip()
+            if clean_code in TARGET_ITEMS:
                 try:
                     qty = float(full_text_list[i+2].replace(",", ""))
-                    amt = float(full_text_list[i+3].replace(",", ""))
-                    extracted_rows.append({"รหัสสินค้า": code, "ชื่อสินค้า": MASTER_ITEMS[code], "Qty": qty, "ยอดก่อน VAT": amt})
+                    amt_before_vat = float(full_text_list[i+3].replace(",", ""))
+                    extracted_data.append({
+                        "รหัสสินค้า": clean_code,
+                        "ชื่อสินค้า": TARGET_ITEMS[clean_code],
+                        "Qty Sum": qty,
+                        "ยอดก่อน VAT": round(amt_before_vat, 2),
+                        "ยอดสุทธิ (+Vat 7%)": round(amt_before_vat * 1.07, 2)
+                    })
                 except: continue
 
-        if extracted_rows:
-            df = pd.DataFrame(extracted_rows).groupby(['รหัสสินค้า', 'ชื่อสินค้า']).sum().reset_index()
+        if extracted_data:
+            df = pd.DataFrame(extracted_data)
+            df = df.sort_values(by="Qty Sum", ascending=False).reset_index(drop=True)
             
-            # --- Logic กระจายยอด 99 บาท ---
-            if "621822" in df['รหัสสินค้า'].values:
-                s_row = df[df['รหัสสินค้า'] == "621822"].iloc[0]
-                dist = {"231259": 0.5, "654830": 0.3, "724276": 0.2}
-                for code, ratio in dist.items():
-                    if code in df['รหัสสินค้า'].values:
-                        df.loc[df['รหัสสินค้า'] == code, 'Qty'] += (s_row['Qty'] * ratio)
-                        df.loc[df['รหัสสินค้า'] == code, 'ยอดก่อน VAT'] += (s_row['ยอดก่อน VAT'] * ratio)
-                    else:
-                        new_item = {"รหัสสินค้า": code, "ชื่อสินค้า": MASTER_ITEMS[code], "Qty": s_row['Qty']*ratio, "ยอดก่อน VAT": s_row['ยอดก่อน VAT']*ratio}
-                        df = pd.concat([df, pd.DataFrame([new_item])], ignore_index=True)
-                df = df[df['รหัสสินค้า'] != "621822"]
-
-            df['ยอดรวม VAT'] = df['ยอดก่อน VAT'] * 1.07
-            total_before = df['ยอดก่อน VAT'].sum()
-            total_after = df['ยอดรวม VAT'].sum()
-            achieve_pc = (total_after / DAILY_TARGET) * 100
-
-            # --- Dashboard ---
-            col1, col2, col3 = st.columns(3)
-            col1.metric("ยอดรวมก่อน VAT", f"{total_before:,.2f} ฿")
-            col2.metric("ยอดรวมสุทธิ (+7%)", f"{total_after:,.2f} ฿")
-            col3.metric("Achievement", f"{achieve_pc:.2f}%", delta=f"{total_after-DAILY_TARGET:,.2f}")
-
-            st.write("---")
+            # คำนวณยอดรวมทั้งหมด
+            total_qty = df["Qty Sum"].sum()
+            total_before_vat = df["ยอดก่อน VAT"].sum()
+            total_after_vat = df["ยอดสุทธิ (+Vat 7%)"].sum()
             
-            # กราฟเส้น (Line Chart) โทนสีขาวสว่าง
-            st.subheader("📈 แนวโน้มยอดขายสุทธิ")
-            fig = px.line(df.sort_values('ยอดรวม VAT', ascending=False), 
-                          x="ชื่อสินค้า", y="ยอดรวม VAT", markers=True)
-            fig.update_traces(line_color='#60a5fa', marker=dict(size=10, color='white'))
-            fig.update_layout(
-                paper_bgcolor='rgba(0,0,0,0)', 
-                plot_bgcolor='rgba(0,0,0,0)',
-                font_color="white"
-            )
+            # คำนวณ % ส่วนแบ่ง (อิงจากยอดสุทธิ)
+            df["ส่วนแบ่ง (%)"] = ((df["ยอดสุทธิ (+Vat 7%)"] / total_after_vat) * 100).round(2)
+
+            # --- สร้างแถวสรุปยอดรวม (Grand Total) ---
+            total_row = pd.DataFrame([{
+                "รหัสสินค้า": "TOTAL",
+                "ชื่อสินค้า": "ยอดรวมทั้งหมด",
+                "Qty Sum": total_qty,
+                "ยอดก่อน VAT": total_before_vat,
+                "ยอดสุทธิ (+Vat 7%)": total_after_vat,
+                "ส่วนแบ่ง (%)": 100.0
+            }])
+            
+            df_with_total = pd.concat([df, total_row], ignore_index=True)
+
+            # --- กราฟเส้นแนวโน้มยอดขาย ---
+            st.subheader("📈 กราฟแนวโน้มยอดขายสุทธิ")
+            fig = px.line(df, x="ชื่อสินค้า", y="ยอดสุทธิ (+Vat 7%)", markers=True, 
+                          text="ยอดสุทธิ (+Vat 7%)")
             st.plotly_chart(fig, use_container_width=True)
 
-            # ตารางข้อมูล
-            st.subheader("📋 รายละเอียดรายการขายทั้งหมด")
-            st.dataframe(df.style.format({
-                "Qty": "{:.2f}",
-                "ยอดก่อน VAT": "{:,.2f}",
-                "ยอดรวม VAT": "{:,.2f}"
-            }), use_container_width=True)
+            # --- ตารางสรุปผล ---
+            st.subheader("🏆 รายงานสรุปยอดขาย (เรียงตาม Qty)")
+            
+            def highlight_rows(row):
+                if row["รหัสสินค้า"] == "TOTAL":
+                    return ['background-color: #2E4053; color: white; font-weight: bold; border-top: 2px solid white'] * len(row)
+                elif row.name == 0: color = '#FFD700' # Gold
+                elif row.name == 1: color = '#C0C0C0' # Silver
+                elif row.name == 2: color = '#CD7F32' # Bronze
+                else: color = ''
+                return [f'background-color: {color}; color: black; font-weight: bold' if color else '' for _ in row]
 
+            st.table(df_with_total.style.apply(highlight_rows, axis=1).format({
+                "ยอดก่อน VAT": "{:,.2f}",
+                "ยอดสุทธิ (+Vat 7%)": "{:,.2f}",
+                "ส่วนแบ่ง (%)": "{}%"
+            }))
+            
+            # --- กล่องสรุป 2 Total ---
+            col1, col2 = st.columns(2)
+            col1.metric("ยอดรวมก่อน VAT", f"{total_before_vat:,.2f} บาท")
+            col2.metric("ยอดรวมสุทธิ (+VAT 7%)", f"{total_after_vat:,.2f} บาท", delta=f"VAT 7%: {total_after_vat-total_before_vat:,.2f}")
+            
         else:
-            st.error("ไม่พบรหัสสินค้าที่ระบุในรูปภาพ")
+            st.error("❌ ไม่พบข้อมูลในรูปภาพ")
