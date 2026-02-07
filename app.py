@@ -6,23 +6,27 @@ import easyocr
 import numpy as np
 from PIL import Image
 
-# --- CONFIG & LIGHT THEME ---
-st.set_page_config(page_title="RTE Sales Report", layout="wide")
+# --- CONFIG & BRIGHT THEME ---
+st.set_page_config(page_title="RTE Executive Report", layout="wide")
 
-# ปรับ CSS ให้อ่านง่าย: ตัวหนังสือดำ พื้นขาว เน้นแดง
+# CSS: พื้นหลังขาว, ตัวหนังสือดำ, กล่อง Metric ขาวขอบแดง (อ่านง่ายที่สุด)
 st.markdown("""
     <style>
-    .main { background-color: #ffffff; }
+    .main { background-color: #ffffff !important; }
+    h1, h2, h3, p, span, label { color: #000000 !important; }
     div[data-testid="stMetric"] { 
-        background-color: #f9f9f9; 
-        border: 1px solid #dddddd; 
-        border-radius: 8px; 
-        padding: 15px; 
+        background-color: #ffffff !important; 
+        border: 1px solid #dddddd !important; 
+        border-top: 5px solid #cc0000 !important; 
+        border-radius: 12px !important; 
+        padding: 20px !important;
+        box-shadow: 2px 2px 15px rgba(0,0,0,0.05);
     }
-    div[data-testid="stMetricValue"] { color: #cc0000 !important; font-size: 32px !important; }
-    div[data-testid="stMetricLabel"] { color: #333333 !important; font-size: 16px !important; }
-    .stTable { border: 1px solid #eeeeee; }
-    h1, h2, h3 { color: #000000; }
+    div[data-testid="stMetricValue"] > div { color: #cc0000 !important; font-size: 38px !important; font-weight: bold !important; }
+    div[data-testid="stMetricLabel"] > label { color: #444444 !important; font-size: 18px !important; }
+    section[data-testid="stSidebar"] { background-color: #1a1a1a !important; }
+    section[data-testid="stSidebar"] .stMarkdown h2 { color: #ffffff !important; }
+    .stTable { background-color: white !important; color: black !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -61,8 +65,8 @@ reader = get_reader()
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.markdown("## ⚙️ การตั้งค่า")
-    page = st.radio("เลือกหน้า", ["📊 ภาพรวม", "🍟 หมวดทานเล่น", "🍱 หมวดพร้อมทาน"])
+    st.markdown("## ⚙️ การตั้งค่าหน้าจอ")
+    page = st.radio("เลือกหน้า", ["🏠 สรุปภาพรวม", "🍟 หมวดทานเล่น", "🍱 หมวดพร้อมทาน"])
     uploaded_file = st.file_uploader("อัปโหลดรูปยอดขาย", type=['jpg', 'png', 'jpeg'])
 
 if uploaded_file:
@@ -78,36 +82,35 @@ if uploaded_file:
             code = text.replace(" ", "").strip()
             if code in CATEGORY_MAP:
                 try:
-                    # แก้ไขตำแหน่ง Index: ขยับไป 2 ช่องเป็น Qty, 3 ช่องเป็น Amount
-                    # ตรวจสอบหาตำแหน่งที่มีค่าตัวเลขจริง
-                    q_val = full_text[i+2].replace(",", "")
-                    a_val = full_text[i+3].replace(",", "")
-                    extracted[code] = {"q": float(q_val), "a": float(a_val)}
+                    # ปรับ Index ใหม่ให้อ่านตรงช่อง Qty และ Net Amount
+                    qty = float(full_text[i+2].replace(",", ""))
+                    amt = float(full_text[i+3].replace(",", ""))
+                    extracted[code] = {"q": qty, "a": amt}
                 except: continue
 
-        # กระจายยอด 99 บาท (621822)
+        # --- CONDITION ZONE พร้อมทาน (621822) ---
         if "621822" in extracted:
-            p99 = extracted.pop("621822")
+            v99 = extracted.pop("621822")
+            # กระจายยอด: 50% เนื้อเป็ด, 30% เป็ดพะโล้, 20% ขาหมู
             for c, r in {"231259": 0.5, "654830": 0.3, "724276": 0.2}.items():
                 if c not in extracted: extracted[c] = {"q": 0, "a": 0}
-                extracted[c]["q"] += p99["q"] * r
-                extracted[c]["a"] += p99["a"] * r
+                extracted[c]["q"] += v99["q"] * r
+                extracted[c]["a"] += v99["a"] * r
 
-        # สร้าง DataFrame
         df = pd.DataFrame([
-            {"Category": CATEGORY_MAP[c], "Name": PRODUCT_NAMES[c], "Qty": v["q"], 
-             "Amt_Net": v["a"], "Amt_Vat": round(v["a"] * 1.07, 2)}
+            {"หมวด": CATEGORY_MAP[c], "ชื่อสินค้า": PRODUCT_NAMES[c], "จำนวน": v["q"], 
+             "ราคาเดิม": v["a"], "ราคา+VAT": round(v["a"] * 1.07, 2)}
             for c, v in extracted.items()
         ])
 
     if not df.empty:
-        if page == "📊 ภาพรวม":
-            st.title("🍎 สรุปยอดขายรายวัน (Overview)")
+        if page == "🏠 สรุปภาพรวม":
+            st.title("🍎 รายงานยอดขายสรุป (Station Overview)")
             
-            # --- Gauge ---
-            total_vat = df["Amt_Vat"].sum()
+            total_vat = df["ราคา+VAT"].sum()
             achieve = (total_vat / TARGET_REVENUE) * 100
             
+            # Gauge & Stats
             c1, c2 = st.columns([2, 1])
             with c1:
                 fig = go.Figure(go.Indicator(
@@ -115,36 +118,39 @@ if uploaded_file:
                     title={'text': "Achievement vs Target (170k)"},
                     gauge={'axis': {'range': [None, TARGET_REVENUE]},
                            'bar': {'color': "#cc0000"},
-                           'steps': [{'range': [0, TARGET_REVENUE], 'color': "#f2f2f2"}]}))
+                           'bgcolor': "white",
+                           'steps': [{'range': [0, TARGET_REVENUE], 'color': "#f5f5f5"}]}))
                 st.plotly_chart(fig, use_container_width=True)
             
             with c2:
-                st.metric("Achievement", f"{achieve:.2f}%")
-                st.metric("ยอดรวม (+VAT)", f"{total_vat:,.2f}")
-                st.metric("ขาดอีก", f"{max(0, TARGET_REVENUE - total_vat):,.2f}")
+                st.metric("Achievement %", f"{achieve:.2f}%")
+                st.metric("ยอดสุทธิ (+VAT)", f"{total_vat:,.2f}")
+                st.metric("ยอดราคาเดิม (ก่อน VAT)", f"{df['ราคาเดิม'].sum():,.2f}")
 
-            # --- ยอดรวมรายสเตชั่น ---
-            st.subheader("🏢 ยอดรวมแยกตามสถานี (Station Total)")
-            station_total = df.groupby("Category")[["Amt_Net", "Amt_Vat"]].sum().reset_index()
-            st.table(station_total.style.format({"Amt_Net": "{:,.2f}", "Amt_Vat": "{:,.2f}"}))
+            st.markdown("---")
+            
+            # --- ตารางยอดรวมรายสเตชั่น (Station Total) ---
+            st.subheader("🏢 ยอดรวมรายสถานี (Station Summary)")
+            station_sum = df.groupby("หมวด")[["ราคาเดิม", "ราคา+VAT"]].sum().reset_index()
+            st.table(station_sum.style.format({"ราคาเดิม": "{:,.2f}", "ราคา+VAT": "{:,.2f}"}))
 
-            # --- 3 รายการยอดตก ---
-            st.subheader("⚠️ 3 รายการที่ควรดันยอด (Low Qty)")
-            low_3 = df.sort_values("Qty").head(3)
-            cols = st.columns(3)
+            # --- 3 อันดับยอดต่ำ ---
+            st.subheader("⚠️ 3 อันดับที่ต้องผลักดัน (Low Qty)")
+            low_3 = df.sort_values("จำนวน").head(3)
+            lcols = st.columns(3)
             for i, row in enumerate(low_3.itertuples()):
-                cols[i].warning(f"**{row.Name}**\nQty: {row.Qty} | ยอด: {row.Amt_Vat:,.2f}")
+                lcols[i].metric(row.ชื่อสินค้า, f"{row.จำนวน} ชิ้น", f"ยอด: {row._5:,.2f} บาท")
 
         else:
-            cat_name = "ทานเล่น" if "Snack" in page else "พร้อมทาน"
-            st.title(f"📍 สรุปข้อมูลหมวด: {cat_name}")
-            sub_df = df[df["Category"] == cat_name].sort_values("Qty", ascending=False)
+            # หน้าแยกหมวด
+            cat_name = "ทานเล่น" if "ทานเล่น" in page else "พร้อมทาน"
+            st.title(f"📍 เจาะลึกหมวด: {cat_name}")
+            sub_df = df[df["หมวด"] == cat_name].sort_values("จำนวน", ascending=False)
             
-            # สรุปยอดหัวหน้า
             m1, m2 = st.columns(2)
-            m1.metric("ยอดรวมก่อน VAT", f"{sub_df['Amt_Net'].sum():,.2f}")
-            m2.metric("ยอดรวมสุทธิ (+VAT)", f"{sub_df['Amt_Vat'].sum():,.2f}")
+            m1.metric(f"ยอดรวม {cat_name} (ราคาเดิม)", f"{sub_df['ราคาเดิม'].sum():,.2f}")
+            m2.metric(f"ยอดรวม {cat_name} (+VAT)", f"{sub_df['ราคา+VAT'].sum():,.2f}")
             
-            st.table(sub_df.style.format({"Amt_Net": "{:,.2f}", "Amt_Vat": "{:,.2f}"}))
+            st.table(sub_df.style.format({"ราคาเดิม": "{:,.2f}", "ราคา+VAT": "{:,.2f}"}))
 else:
-    st.info("👈 กรุณาอัปโหลดรูปภาพที่แถบด้านซ้าย")
+    st.info("👈 กรุณาอัปโหลดรูปภาพยอดขายที่เมนูด้านซ้าย")
