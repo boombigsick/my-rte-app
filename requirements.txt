@@ -1,6 +1,5 @@
+streamlit
 pandas
 plotly
-streamlit
-easyocr
-opencv-python-headless
-numpy
+pytesseract
+Pillow
