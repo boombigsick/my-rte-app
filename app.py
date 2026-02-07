@@ -1,15 +1,14 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import pytesseract
+import easyocr
+import numpy as np
 from PIL import Image
-import re
 
-# ตั้งค่าหน้าแอป
-st.set_page_config(page_title="RTE Super Analyst", layout="wide")
-st.title("🚀 RTE Auto-Analysis Dashboard")
+st.set_page_config(page_title="RTE Sales Pro", layout="wide")
+st.title("📊 RTE Auto-Sales Analyst")
 
-# ข้อมูลเมนูที่กำหนด
+# ข้อมูลเมนูของคุณ
 TARGET_ITEMS = {
     "203081": "ฮ็อทด็อก", "250561": "ขนมจีบหมู ชุดใหญ่", "274583": "ชุดรวมของทอด",
     "299207": "ไก่ป๊อปชุดใหญ่", "381059": "นักเก็ตไก่คลาสสิค", "395441": "ฮะเก๋าชุดใหญ่",
@@ -18,66 +17,72 @@ TARGET_ITEMS = {
     "956994": "นักเก็ตชุดใหญ่"
 }
 
-uploaded_file = st.file_uploader("📷 อัปโหลดรูปภาพยอดขาย", type=['jpg', 'jpeg', 'png'])
+# โหลด Reader ครั้งเดียวเพื่อประหยัดความจำ
+@st.cache_resource
+def get_reader():
+    return easyocr.Reader(['th', 'en'])
+
+reader = get_reader()
+
+uploaded_file = st.file_uploader("📷 อัปโหลดรูปยอดขาย (ระบุวันที่ในชื่อไฟล์ได้)", type=['jpg', 'png', 'jpeg'])
 
 if uploaded_file:
-    img = Image.open(uploaded_file)
-    st.image(img, caption="รูปภาพที่นำเข้า", width=400)
+    image = Image.open(uploaded_file)
+    st.image(image, caption="รูปภาพที่นำเข้า", width=400)
     
-    with st.spinner('กำลังใช้ AI สแกนข้อมูล...'):
-        # สแกนข้อความจากภาพ
-        text_data = pytesseract.image_to_string(img, lang='eng+tha')
-        lines = text_data.split('\n')
+    with st.spinner('AI กำลังวิเคราะห์และเรียงลำดับสินค้า...'):
+        img_np = np.array(image)
+        result = reader.readtext(img_np)
         
-        final_list = []
-        for line in lines:
-            parts = line.split()
-            for art_no, name in TARGET_ITEMS.items():
-                if art_no in line:
-                    # ใช้ Regex ดึงตัวเลข Qty และ Amount ที่อยู่ท้ายบรรทัด
-                    numbers = re.findall(r"(\d+\.?\d*)", line.replace(",", ""))
-                    if len(numbers) >= 3:
-                        qty = float(numbers[-2])
-                        amt = float(numbers[-1])
-                        final_list.append({
-                            "รหัสสินค้า": art_no,
-                            "ชื่อสินค้า": name,
-                            "Qty Sum": qty,
-                            "Amount (+Vat 7%)": round(amt * 1.07, 2)
-                        })
+        extracted_data = []
+        full_text_list = [res[1] for res in result]
+        
+        # ค้นหาข้อมูลตามรหัสสินค้า
+        for i, text in enumerate(full_text_list):
+            clean_code = text.replace(" ", "").strip()
+            if clean_code in TARGET_ITEMS:
+                try:
+                    # พยายามหาตัวเลข Qty และ Amount ในบริเวณใกล้เคียง
+                    qty = float(full_text_list[i+2].replace(",", ""))
+                    amt = float(full_text_list[i+3].replace(",", ""))
+                    extracted_data.append({
+                        "รหัสสินค้า": clean_code,
+                        "ชื่อสินค้า": TARGET_ITEMS[clean_code],
+                        "Qty Sum": qty,
+                        "Amount (+Vat 7%)": round(amt * 1.07, 2)
+                    })
+                except: continue
 
-        if final_list:
-            df = pd.DataFrame(final_list)
-            # เรียงลำดับขายดีสุด (Qty) อยู่บนสุด
+        if extracted_data:
+            df = pd.DataFrame(extracted_data)
+            # เรียงลำดับจาก Qty มากไปน้อย
             df = df.sort_values(by="Qty Sum", ascending=False).reset_index(drop=True)
             
             # คำนวณ % ส่วนแบ่งยอดขาย
-            total_amt = df["Amount (+Vat 7%)"].sum()
-            df["สัดส่วนยอดขาย (%)"] = ((df["Amount (+Vat 7%)"] / total_amt) * 100).round(2)
+            total_sales = df["Amount (+Vat 7%)"].sum()
+            df["ส่วนแบ่งยอดขาย (%)"] = ((df["Amount (+Vat 7%)"] / total_sales) * 100).round(2)
 
-            # --- ส่วนแสดงผล UX/UI ---
-            
-            # 1. กราฟเส้นภาพรวม
-            st.subheader("📈 แนวโน้มยอดขายแต่ละรายการ")
+            # --- แสดงผลกราฟเส้น ---
+            st.subheader("📈 แนวโน้มยอดขาย (Trend)")
             fig = px.line(df, x="ชื่อสินค้า", y="Amount (+Vat 7%)", markers=True, 
-                          text="Amount (+Vat 7%)", title="Sales Trend (Inc. VAT)")
-            fig.update_traces(textposition="top center")
+                          text="Amount (+Vat 7%)", title="Sales Value Chart")
             st.plotly_chart(fig, use_container_width=True)
 
-            # 2. ตารางอันดับสินค้า
-            st.subheader("🏆 อันดับสินค้าขายดี (Sorted by Qty)")
+            # --- แสดงตารางและ Mark Top 3 ---
+            st.subheader("🏆 อันดับสินค้าขายดี (Top Qty)")
             
-            # ฟังก์ชันไฮไลท์ Top 3 เป็นสีทอง
-            def style_top3(row):
-                if row.name < 3:
-                    return ['background-color: #f1c40f; color: black; font-weight: bold'] * len(row)
-                return [''] * len(row)
+            def highlight_top3(row):
+                # ไฮไลท์สีตามอันดับ
+                if row.name == 0: color = '#FFD700' # ทอง
+                elif row.name == 1: color = '#C0C0C0' # เงิน
+                elif row.name == 2: color = '#CD7F32' # ทองแดง
+                else: color = ''
+                
+                return [f'background-color: {color}; color: black; font-weight: bold' if color else '' for _ in row]
 
-            st.table(df.style.apply(style_top3, axis=1))
+            st.dataframe(df.style.apply(highlight_top3, axis=1), use_container_width=True)
             
-            # สรุป Insight
-            top3_share = df["สัดส่วนยอดขาย (%)"].head(3).sum()
-            st.success(f"🔥 วิเคราะห์สำเร็จ: สินค้า Top 3 ครองส่วนแบ่งยอดขายถึง {top3_share}% ของทั้งหมด!")
-            
+            # สรุปผล
+            st.info(f"💡 สินค้าอันดับ 1 ({df['ชื่อสินค้า'][0]}) ครองสัดส่วนยอดขายถึง {df['ส่วนแบ่งยอดขาย (%)'][0]}% ของยอดรวมทั้งหมด")
         else:
-            st.warning("⚠️ ไม่พบรหัสสินค้าที่กำหนดในรูปภาพ โปรดตรวจสอบว่ารูปชัดเจนและเห็นรหัสสินค้า (Art no)")
+            st.error("❌ ไม่พบรหัสสินค้าในรูปภาพ กรุณาตรวจสอบว่ารูปภาพชัดเจน")
